@@ -1,0 +1,65 @@
+Parameters: 
+  InstanceTypeParameter: 
+    Type: String
+    Default: t2.micro
+    AllowedValues: 
+      - t2.micro
+      - m1.small
+      - m1.large
+    Description: Enter t2.micro, m1.small, or m1.large. Default is t2.micro.
+  SubnetID: 
+    Type: String
+    Default: subnet-13048664
+    Description: Enter a subnet.
+Resources:
+
+  EC2Instance:
+    Type: AWS::EC2::Instance
+    Properties: 
+      #IamInstanceProfile: String
+      ImageId: ami-017e1dd35b94fb074
+      InstanceType: !Ref InstanceTypeParameter
+      KeyName: jdeon-flaws
+      Monitoring: True
+      SecurityGroupIds: 
+        - !Ref WebSecurityGroup
+      SubnetId: !Ref SubnetID
+      Tags: 
+        - Key: Name
+          Value: docker-registry
+      UserData: 
+        Fn::Base64: !Sub |
+            #!/bin/bash -xe
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+            add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+            apt-get update
+            apt-cache policy docker-ce
+            apt-get install -y docker-ce
+            usermod -aG docker ubuntu
+
+  WebSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId: vpc-b99205dc
+      GroupDescription: Enable HTTP access via user defined port
+      SecurityGroupIngress:
+      - CidrIp: 0.0.0.0/0
+        FromPort: 80
+        IpProtocol: tcp
+        ToPort: 80
+      - CidrIp: 66.75.253.233/32
+        FromPort: 22
+        IpProtocol: tcp
+        ToPort: 22
+
+
+  Route53:
+    Type: AWS::Route53::RecordSet
+    Properties: 
+      Comment: Record for friendly url to access my docker registry.
+      HostedZoneId: Z11J173D9X7UC7
+      Name: docker.josephdeon.me
+      ResourceRecords:
+      - !GetAtt EC2Instance.PublicIp
+      TTL: 300
+      Type: A
