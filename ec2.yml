@@ -19,7 +19,7 @@ Resources:
       #IamInstanceProfile: String
       ImageId: ami-017e1dd35b94fb074
       InstanceType: !Ref InstanceTypeParameter
-      KeyName: jdeon-flaws
+      KeyName: jdeon-work
       Monitoring: True
       SecurityGroupIds: 
         - !Ref WebSecurityGroup
@@ -34,8 +34,19 @@ Resources:
             add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
             apt-get update
             apt-cache policy docker-ce
-            apt-get install -y docker-ce
+            apt-get install -y docker-ce certbot
             usermod -aG docker ubuntu
+            certbot certonly --noninteractive --standalone -d docker.josephdeon.me
+            mkir certs
+            docker run -d \
+            --restart=always \
+            --name registry \
+            -v /etc/letsencrypt/live/docker.josephdeon.me:/certs \
+            -e REGISTRY_HTTP_ADDR=0.0.0.0:443 \
+            -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/fullchain.pem \
+            -e REGISTRY_HTTP_TLS_KEY=/certs/privkey.pem \
+            -p 443:443 \
+            registry:2
 
   WebSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -48,6 +59,10 @@ Resources:
         IpProtocol: tcp
         ToPort: 80
       - CidrIp: 66.75.253.233/32
+        FromPort: 22
+        IpProtocol: tcp
+        ToPort: 22
+      - CidrIp: 70.179.23.5/32
         FromPort: 22
         IpProtocol: tcp
         ToPort: 22
