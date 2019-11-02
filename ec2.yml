@@ -1,33 +1,57 @@
-Parameters: 
-  InstanceTypeParameter: 
+Parameters:
+  InstanceTypeParameter:
     Type: String
     Default: t2.micro
-    AllowedValues: 
+    AllowedValues:
       - t2.micro
       - m1.small
       - m1.large
     Description: Enter t2.micro, m1.small, or m1.large. Default is t2.micro.
-  SubnetID: 
+  SubnetID:
     Type: String
-    Default: subnet-13048664
-    Description: Enter a subnet.
-Resources:
+    Description: for the ec2 instance
+  DomainName:
+    Type: String
+    Description: to reach the docker registry
+  SSHKeyName:
+    Type: String
+    Description: must match an existing key in aws
+  HomeCIDR:
+    Type: String
+    Description: too ssh into the server from your home ip
+  HostedZoneId:
+    Type: String
+    Description: for the ec2 instance
+  VpcId:
+    Type: String
+    Description: for the security group
+  CertbotEmail:
+    Type: String
+    Description: email for certificate creation
+  DockerUser:
+    Type: String
+    Description: user for basic auth to docker registry
+  DockerPassword:
+    Type: String
+    Description: password for basic auth to docker registry
+    NoEcho: true
 
+Resources:
   EC2Instance:
     Type: AWS::EC2::Instance
-    Properties: 
+    Properties:
       #IamInstanceProfile: String
       ImageId: ami-017e1dd35b94fb074
       InstanceType: !Ref InstanceTypeParameter
-      KeyName: jdeon-work
+      KeyName: !Ref SSHKeyName
       Monitoring: True
-      SecurityGroupIds: 
+      SecurityGroupIds:
         - !Ref WebSecurityGroup
       SubnetId: !Ref SubnetID
-      Tags: 
+      Tags:
         - Key: Name
           Value: docker-registry
-      UserData: 
+      UserData:
         Fn::Base64: !Sub |
             #!/bin/bash -xe
             curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
@@ -35,45 +59,53 @@ Resources:
             apt-get update
             apt-cache policy docker-ce
             apt-get install -y docker-ce certbot
+            mkdir auth
+            docker run \
+              --entrypoint htpasswd \
+              registry:2 -Bbn ${DockerUser} ${DockerPassword} > auth/htpasswd
             usermod -aG docker ubuntu
-            certbot certonly --noninteractive --standalone -d docker.josephdeon.me
-            mkir certs
+            certbot certonly --noninteractive --agree-tos --email ${CertbotEmail} --standalone -d ${DomainName}
             docker run -d \
-            --restart=always \
-            --name registry \
-            -v /etc/letsencrypt/live/docker.josephdeon.me:/certs \
-            -e REGISTRY_HTTP_ADDR=0.0.0.0:443 \
-            -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/fullchain.pem \
-            -e REGISTRY_HTTP_TLS_KEY=/certs/privkey.pem \
-            -p 443:443 \
-            registry:2
+              --restart=always \
+              --name registry \
+              -v /etc/letsencrypt/archive/${DomainName}:/etc/letsencrypt/archive/${DomainName} \
+              -v /etc/letsencrypt/live/${DomainName}:/etc/letsencrypt/live/${DomainName} \
+              -v "$(pwd)"/auth:/auth \
+              -e "REGISTRY_AUTH=htpasswd" \
+              -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
+              -e REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd \
+              -e REGISTRY_HTTP_ADDR=0.0.0.0:443 \
+              -e REGISTRY_HTTP_HOST=${DomainName} \
+              -e REGISTRY_HTTP_TLS_CERTIFICATE=/etc/letsencrypt/live/${DomainName}/fullchain.pem \
+              -e REGISTRY_HTTP_TLS_KEY=/etc/letsencrypt/live/${DomainName}/privkey.pem \
+              -p 443:443 \
+              registry:2
 
   WebSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      VpcId: vpc-b99205dc
+      VpcId: !Ref VpcId
       GroupDescription: Enable HTTP access via user defined port
       SecurityGroupIngress:
       - CidrIp: 0.0.0.0/0
         FromPort: 80
         IpProtocol: tcp
         ToPort: 80
-      - CidrIp: 66.75.253.233/32
+      - CidrIp: 0.0.0.0/0
+        FromPort: 443
+        IpProtocol: tcp
+        ToPort: 443
+      - CidrIp: !Ref HomeCIDR
         FromPort: 22
         IpProtocol: tcp
         ToPort: 22
-      - CidrIp: 70.179.23.5/32
-        FromPort: 22
-        IpProtocol: tcp
-        ToPort: 22
-
 
   Route53:
     Type: AWS::Route53::RecordSet
-    Properties: 
+    Properties:
       Comment: Record for friendly url to access my docker registry.
-      HostedZoneId: Z11J173D9X7UC7
-      Name: docker.josephdeon.me
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
       ResourceRecords:
       - !GetAtt EC2Instance.PublicIp
       TTL: 300
